@@ -1,0 +1,867 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>DMN Rule Change Approval Console</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Fira Code', 'Consolas', 'Menlo', 'monospace'],
+      },
+    },
+  },
+};
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f8fafc;
+    --panel: #ffffff;
+    --border: #e2e8f0;
+    --text: #0f172a;
+    --muted: #64748b;
+    --accent: #2563eb;
+    --accent-dark: #1d4ed8;
+    --warn: #b45309;
+    --warn-bg: #fef3c7;
+    --ok: #15803d;
+    --ok-bg: #dcfce7;
+    --reject-bg: #fee2e2;
+    --reject: #b91c1c;
+    --modify-bg: #ede9fe;
+    --modify: #6d28d9;
+    --radius: 8px;
+  }
+  .change-preview {
+    background: #0f172a; color: #e2e8f0;
+    border-radius: 6px; padding: 14px 16px;
+    font-size: 12px; font-family: "JetBrains Mono", "Fira Code", Consolas, Menlo, monospace;
+    overflow-x: auto; max-height: 400px; overflow-y: auto;
+    white-space: pre-wrap; line-height: 1.5;
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+</style>
+<style type="text/tailwindcss">
+  @layer components {
+    .queue-item { @apply px-4 py-3.5 border-b border-slate-200 cursor-pointer relative hover:bg-slate-50 transition-colors; }
+    .queue-item.active { @apply bg-blue-50 border-l-[3px] border-l-blue-600; }
+    .queue-item .title { @apply font-semibold text-sm text-slate-900 pr-6; }
+    .queue-item .meta { @apply text-slate-500 text-xs mt-1; }
+    .queue-item .time { @apply text-slate-400 text-[11px] mt-1.5; }
+    .queue-item-remove { @apply absolute top-2.5 right-3 bg-transparent border-none text-slate-400 cursor-pointer w-5 h-5 flex items-center justify-center rounded-md text-base hover:bg-red-100 hover:text-red-700; }
+    .pill { @apply inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full mt-1.5; }
+    .pill.pending { @apply bg-amber-100 text-amber-700; }
+    .pill.resolved { @apply bg-emerald-100 text-emerald-700; }
+    .pill.rejected { @apply bg-red-100 text-red-700; }
+    .pill.modify { @apply bg-violet-100 text-violet-700; }
+    .empty-state { @apply py-16 px-6 text-center text-slate-500; }
+    .detail-placeholder { @apply text-slate-500 text-center mt-32 text-sm; }
+    .card { @apply bg-white border border-slate-200 rounded-lg px-6 py-5 mb-4; }
+    .card h3 { @apply text-xs font-semibold uppercase tracking-wider text-slate-500 m-0 mb-3; }
+    .attr-grid { display: grid; grid-template-columns: 160px 1fr; row-gap: 10px; column-gap: 12px; font-size: 14px; }
+    .attr-grid .k { @apply text-slate-500; }
+    .attr-grid .v { @apply font-medium text-slate-800 break-words; }
+    .sme-comment-box { @apply bg-amber-50 border border-amber-200 text-amber-900 rounded-lg px-4 py-3.5 text-sm leading-relaxed mb-5; }
+    .detail-title { @apply text-xl font-bold text-slate-900 mb-0.5; }
+    .detail-sub { @apply text-slate-500 text-[13px] mb-5; }
+    .form-input { @apply w-full border border-slate-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500; }
+    .form-textarea { @apply w-full min-h-[100px] border border-slate-300 rounded-lg px-3 py-3 text-sm bg-white resize-y font-sans focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500; }
+    .field-label { @apply block text-[13px] font-semibold text-slate-700 mb-1.5; }
+    .actions { @apply flex flex-wrap items-center gap-2.5 mt-4; }
+    button.primary { @apply bg-blue-600 hover:bg-blue-700 text-white border-none rounded-lg px-5 py-2.5 text-sm font-semibold cursor-pointer transition-colors; }
+    button.primary:disabled { @apply bg-blue-300 cursor-not-allowed; }
+    button.approve-btn { @apply bg-emerald-600 hover:bg-emerald-700; }
+    button.reject-btn { @apply bg-red-600 hover:bg-red-700 text-white border-none rounded-lg px-5 py-2.5 text-sm font-semibold cursor-pointer transition-colors; }
+    button.modify-btn { @apply bg-violet-600 hover:bg-violet-700 text-white border-none rounded-lg px-5 py-2.5 text-sm font-semibold cursor-pointer transition-colors; }
+    .status-msg { @apply text-[13px] mt-2; }
+    .status-msg.err { @apply text-red-700; }
+    .status-msg.ok { @apply text-emerald-700; }
+    .resolved-box { @apply bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-lg px-4 py-3.5 text-sm leading-relaxed; }
+    .resolved-box.rejected { @apply bg-red-50 border-red-200 text-red-900; }
+    .resolved-box.modify { @apply bg-violet-50 border-violet-200 text-violet-900; }
+    code.small { @apply text-xs bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-mono; }
+  }
+</style>
+</head>
+<body class="font-sans bg-slate-50 text-slate-900 flex flex-col h-screen overflow-hidden">
+  <header class="shrink-0 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between">
+    <div>
+      <h1 class="text-lg font-bold text-slate-900 m-0">DMN Rule Change Approval</h1>
+      <div class="text-[13px] text-slate-500 mt-0.5">Review and approve/reject proposed DMN decision table changes (dFlow HITL)</div>
+    </div>
+    <div class="flex items-center gap-4">
+      <button onclick="openTriggerModal()" class="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2 text-sm font-semibold cursor-pointer transition-colors">+ New Rule Change</button>
+      <a href="/" class="text-sm font-medium text-blue-600 hover:underline">Self-Learning Console</a>
+      <a href="/hitl.html" class="text-sm font-medium text-blue-600 hover:underline">HITL Approvals</a>
+      <button class="w-9 h-9 flex items-center justify-center text-slate-500 border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50 hover:text-slate-700 transition-colors" title="Settings" onclick="openSettings()">&#9881;</button>
+    </div>
+  </header>
+
+  <div id="settings-overlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,0.45);align-items:center;justify-content:center;z-index:50;">
+    <div class="bg-white rounded-xl w-[500px] max-w-[92vw] px-6 py-6 shadow-xl">
+      <h2 class="text-[17px] font-bold text-slate-900 m-0 mb-1">HITL Settings</h2>
+      <div class="text-slate-500 text-[13px] mb-5">Configure how this portal resumes paused dFlow pipelines.</div>
+
+      <div class="bg-slate-100 rounded-lg px-3 py-2.5 text-xs text-slate-600 mb-4 break-all">
+        <strong>HITL Webhook URL (give to Data Engine):</strong><br/>
+        <span id="settings-hitl-url"></span>
+      </div>
+
+      <div class="mb-4">
+        <label class="field-label" for="s-data-engine-url">Data Engine Base URL</label>
+        <input type="text" id="s-data-engine-url" class="form-input" placeholder="https://dflow-api.services.kayatech.ai/api/v1" />
+        <div class="text-xs text-slate-500 mt-1">Used to construct resume URL if not provided in webhook headers.</div>
+      </div>
+
+      <div class="mb-4">
+        <label class="field-label" for="s-bearer-token">HITL Bearer Token</label>
+        <input type="text" id="s-bearer-token" class="form-input" placeholder="Leave blank to keep current token" />
+        <div class="text-xs text-slate-500 mt-1" id="s-bearer-hint">Used for Authorization header when resuming HITL requests.</div>
+      </div>
+
+      <div class="mb-4">
+        <label class="field-label" for="s-workflow-url">Workflow Engine Base URL</label>
+        <input type="text" id="s-workflow-url" class="form-input" placeholder="http://localhost:8000/api/v1" />
+      </div>
+
+      <div class="status-msg" id="s-status"></div>
+      <div class="flex justify-end gap-2.5 mt-4">
+        <button onclick="closeSettings()" class="bg-white border border-slate-300 text-slate-700 rounded-lg px-4 py-2.5 text-sm font-semibold cursor-pointer hover:bg-slate-50 transition-colors">Cancel</button>
+        <button onclick="saveSettings()" class="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2.5 text-sm font-semibold cursor-pointer transition-colors">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="trigger-overlay" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,0.45);align-items:center;justify-content:center;z-index:50;">
+    <div class="bg-white rounded-xl w-[600px] max-w-[92vw] max-h-[90vh] overflow-y-auto px-6 py-6 shadow-xl">
+      <h2 class="text-[17px] font-bold text-slate-900 m-0 mb-1">Submit New Rule Change Request</h2>
+      <div class="text-slate-500 text-[13px] mb-5">This will trigger the DMN rule update dFlow with your SME comment.</div>
+
+      <div class="grid grid-cols-2 gap-4 mb-4">
+        <div>
+          <label class="field-label" for="t-ticket-id">Ticket ID <span class="text-red-500">*</span></label>
+          <input type="text" id="t-ticket-id" class="form-input" placeholder="e.g., GFEGK-014" />
+        </div>
+        <div>
+          <label class="field-label" for="t-ticket-type">Ticket Type <span class="text-red-500">*</span></label>
+          <input type="text" id="t-ticket-type" class="form-input" placeholder="e.g., member_termination" />
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <label class="field-label" for="t-target-decision">Target Decision <span class="text-red-500">*</span></label>
+        <input type="text" id="t-target-decision" class="form-input" placeholder="e.g., ClassifyTerminationScenario" />
+      </div>
+
+      <div class="mb-4">
+        <label class="field-label" for="t-sme-comment">SME Comment <span class="text-red-500">*</span></label>
+        <textarea id="t-sme-comment" class="form-textarea" rows="6" placeholder="Describe the rule change needed..."></textarea>
+      </div>
+
+      <div class="grid grid-cols-3 gap-4 mb-4">
+        <div>
+          <label class="field-label" for="t-submitted-by">Submitted By <span class="text-red-500">*</span></label>
+          <input type="text" id="t-submitted-by" class="form-input" placeholder="e.g., lakshani" />
+        </div>
+        <div>
+          <label class="field-label" for="t-submitted-date">Submitted Date</label>
+          <input type="text" id="t-submitted-date" class="form-input" value="" />
+        </div>
+        <div>
+          <label class="field-label" for="t-priority">Priority</label>
+          <select id="t-priority" class="form-input">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high" selected>High</option>
+            <option value="critical">Critical</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="status-msg" id="t-status"></div>
+      <div class="flex justify-end gap-2.5 mt-4">
+        <button onclick="closeTriggerModal()" class="bg-white border border-slate-300 text-slate-700 rounded-lg px-4 py-2.5 text-sm font-semibold cursor-pointer hover:bg-slate-50 transition-colors">Cancel</button>
+        <button onclick="triggerDflow()" id="t-submit-btn" class="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-4 py-2.5 text-sm font-semibold cursor-pointer transition-colors">Trigger dFlow</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="flex flex-1 min-h-0">
+    <aside class="w-[400px] shrink-0 bg-white border-r border-slate-200 overflow-y-auto">
+      <div class="sticky top-0 z-10 bg-white px-4 py-3.5 border-b border-slate-200 flex items-center justify-between">
+        <h2 class="text-xs font-semibold uppercase tracking-wider text-slate-500 m-0">Approval Queue</h2>
+        <span class="bg-blue-600 text-white rounded-full px-2.5 py-0.5 text-xs font-semibold" id="pending-count">0</span>
+      </div>
+      <div id="queue-list"></div>
+    </aside>
+    <main class="flex-1 overflow-y-auto px-8 py-7" id="detail-pane">
+      <div class="detail-placeholder">Select an item from the queue to review the proposed changes.</div>
+    </main>
+  </div>
+
+<script>
+let hitlQueue = [];
+let selectedId = null;
+let lastRenderedStatus = null;
+
+async function loadQueue() {
+    const res = await fetch('/api/hitl/queue');
+    hitlQueue = await res.json();
+    renderQueue();
+    if (selectedId) {
+        const item = hitlQueue.find(q => q.id === selectedId);
+        if (!item || item.status !== lastRenderedStatus) {
+            renderDetail(selectedId);
+        }
+    }
+}
+
+function renderQueue() {
+    const listEl = document.getElementById('queue-list');
+    const pending = hitlQueue.filter(q => q.status === 'pending');
+    document.getElementById('pending-count').innerText = pending.length;
+
+    if (hitlQueue.length === 0) {
+        listEl.innerHTML = '<div class="empty-state">No HITL approval requests yet.<br/>Run a DMN rule update pipeline to trigger one.</div>';
+        return;
+    }
+
+    listEl.innerHTML = hitlQueue.map(item => {
+        let payload = item.payload || {};
+        if (payload.type === 'hitl.request' && payload.data && payload.data.request_payload) {
+            payload = payload.data.request_payload;
+        }
+        const title = payload.target_decision || 'Unknown Decision';
+        const ticket = payload.ticket_id || '';
+        const active = item.id === selectedId ? 'active' : '';
+        const time = new Date(item.receivedAt).toLocaleString();
+        const statusClass = item.status === 'pending' ? 'pending'
+            : item.resolution?.decision === 'rejected' ? 'rejected'
+            : item.resolution?.decision === 'modify' ? 'modify'
+            : 'resolved';
+        const isSmeType = item.feedbackSchema?.properties?.sme_comment != null;
+        const statusLabel = item.status === 'pending' ? (isSmeType ? 'Awaiting SME comment' : 'Needs review')
+            : item.resolution?.decision === 'submitted' ? 'SME comment submitted'
+            : item.resolution?.decision === 'rejected' ? 'Rejected'
+            : item.resolution?.decision === 'modify' ? 'Modifications requested'
+            : 'Approved';
+        return `
+          <div class="queue-item ${active}" onclick="selectItem('${item.id}')">
+            <button class="queue-item-remove" title="Remove" onclick="event.stopPropagation(); removeItem('${item.id}')">&times;</button>
+            <div class="title">${escapeHtml(title)}</div>
+            <div class="meta">${escapeHtml(ticket)} &middot; ${escapeHtml(payload.submitted_by || '')}</div>
+            <div class="time">${time}</div>
+            <span class="pill ${statusClass}">${statusLabel}</span>
+          </div>
+        `;
+    }).join('');
+}
+
+function selectItem(id) {
+    selectedId = id;
+    renderQueue();
+    renderDetail(id);
+}
+
+function renderDetail(id) {
+    const item = hitlQueue.find(q => q.id === id);
+    const pane = document.getElementById('detail-pane');
+    if (!item) {
+        pane.innerHTML = '<div class="detail-placeholder">Select an item from the queue to review.</div>';
+        lastRenderedStatus = null;
+        return;
+    }
+    lastRenderedStatus = item.status;
+
+    // Handle both new format (flat payload) and legacy format (nested in payload.data.request_payload)
+    let p = item.payload || {};
+    if (p.type === 'hitl.request' && p.data && p.data.request_payload) {
+        p = p.data.request_payload;
+    }
+    const changePreview = p.change_set_preview || '(no preview available)';
+    const summary = Array.isArray(p.changes_summary) ? p.changes_summary.join('\n') : (p.changes_summary || '');
+
+    // Use change_items directly from payload (preferred), or fall back to parsing change_set_preview
+    let changeItems = [];
+    if (Array.isArray(p.change_items) && p.change_items.length > 0) {
+        changeItems = p.change_items;
+    } else {
+        try {
+            const changeSetObj = typeof changePreview === 'string' ? JSON.parse(changePreview) : changePreview;
+            changeItems = changeSetObj?.items || [];
+        } catch {}
+    }
+
+    // Detect if this is an SME input collection HITL (feedback schema requires sme_comment)
+    const isSmeInputRequest = item.feedbackSchema?.properties?.sme_comment != null;
+
+    let bottom;
+    if (item.status === 'resolved') {
+        const r = item.resolution || {};
+        const boxClass = r.decision === 'rejected' ? 'rejected' : r.decision === 'modify' ? 'modify' : '';
+        bottom = `
+          <div class="card">
+            <h3>Resolution</h3>
+            <div class="resolved-box ${boxClass}">
+              <strong>Decision:</strong> ${escapeHtml(r.decision || 'unknown')}<br/>
+              <strong>Reviewer:</strong> ${escapeHtml(r.submittedBy || 'unknown')}<br/>
+              <strong>At:</strong> ${new Date(r.submittedAt).toLocaleString()}<br/>
+              ${r.comment ? '<br/><strong>Comment:</strong><br/>' + escapeHtml(r.comment).replace(/\n/g, '<br/>') : ''}
+            </div>
+          </div>
+        `;
+    } else if (isSmeInputRequest) {
+        // SME input collection mode
+        bottom = `
+          <div class="card">
+            <h3>Submit SME Comment</h3>
+            <p class="text-sm text-slate-600 mb-4">This workflow is waiting for an SME comment to proceed. Fill in the details below.</p>
+            <label class="field-label" for="sme-comment-input">SME Comment <span class="text-red-500">*</span></label>
+            <textarea id="sme-comment-input" class="form-textarea mb-4" rows="6" placeholder="Describe the rule change needed..."></textarea>
+            <div class="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label class="field-label" for="sme-submitted-by">Submitted By <span class="text-red-500">*</span></label>
+                <input type="text" id="sme-submitted-by" class="form-input" placeholder="e.g., lakshani" />
+              </div>
+              <div>
+                <label class="field-label" for="sme-submitted-date">Submitted Date <span class="text-red-500">*</span></label>
+                <input type="text" id="sme-submitted-date" class="form-input" value="${new Date().toISOString().slice(0,10).replace(/-/g,'/')}" />
+              </div>
+            </div>
+            <div class="mb-4">
+              <label class="field-label" for="sme-priority">Priority <span class="text-red-500">*</span></label>
+              <select id="sme-priority" class="form-input">
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high" selected>High</option>
+                <option value="critical">Critical</option>
+              </select>
+            </div>
+            <label class="field-label" for="sme-reviewer-name">Your Name</label>
+            <input type="text" id="sme-reviewer-name" value="SME Reviewer" class="form-input mb-4" />
+            <div class="actions">
+              <button class="primary" onclick="submitSmeInput('${item.id}')">Submit SME Comment</button>
+            </div>
+            <div class="status-msg" id="status-msg"></div>
+          </div>
+        `;
+    } else {
+        // Approval mode
+        bottom = `
+          <div class="card">
+            <h3>Your Decision</h3>
+            <label class="field-label" for="reviewer-name">Reviewer name</label>
+            <input type="text" id="reviewer-name" value="Rule Owner" class="form-input mb-4" />
+            <label class="field-label" for="review-comment">Comment (optional)</label>
+            <textarea id="review-comment" class="form-textarea" placeholder="Add notes about your decision..."></textarea>
+            <div class="actions">
+              <button class="primary approve-btn" onclick="submitDecision('${item.id}', 'approved')">Approve</button>
+              <button class="reject-btn" onclick="submitDecision('${item.id}', 'rejected')">Reject</button>
+              <button class="modify-btn" onclick="submitDecision('${item.id}', 'modify')">Request Changes</button>
+            </div>
+            <div class="status-msg" id="status-msg"></div>
+          </div>
+        `;
+    }
+
+    if (isSmeInputRequest) {
+        pane.innerHTML = `
+          <div class="detail-title">${escapeHtml(p.target_decision || 'SME Comment Required')}</div>
+          <div class="detail-sub">
+            Ticket: <code class="small">${escapeHtml(p.ticket_id || 'N/A')}</code> &middot;
+            Type: <code class="small">${escapeHtml(p.ticket_type || 'N/A')}</code>
+          </div>
+
+          <div class="card">
+            <h3>Request Details</h3>
+            <div class="attr-grid">
+              <div class="k">Target Decision</div><div class="v">${escapeHtml(p.target_decision || 'N/A')}</div>
+              <div class="k">Ticket ID</div><div class="v">${escapeHtml(p.ticket_id || 'N/A')}</div>
+              <div class="k">Ticket Type</div><div class="v">${escapeHtml(p.ticket_type || 'N/A')}</div>
+            </div>
+            ${p.message ? '<div class="mt-4 bg-blue-50 border border-blue-200 text-blue-900 rounded-lg px-4 py-3 text-sm">' + escapeHtml(p.message) + '</div>' : ''}
+          </div>
+
+          ${bottom}
+        `;
+    } else {
+        pane.innerHTML = `
+          <div class="detail-title">${escapeHtml(p.target_decision || 'Decision Change Review')}</div>
+          <div class="detail-sub">
+            Ticket: <code class="small">${escapeHtml(p.ticket_id || 'N/A')}</code> &middot;
+            Priority: <code class="small">${escapeHtml(p.priority || 'N/A')}</code> &middot;
+            Submitted by: ${escapeHtml(p.submitted_by || 'N/A')}
+          </div>
+
+          <div class="sme-comment-box">
+            <strong>SME Comment (original request):</strong><br/>
+            ${escapeHtml(p.sme_comment || 'No comment provided').replace(/\n/g, '<br/>')}
+          </div>
+
+          <div class="card">
+            <h3>Proposed Changes (${p.changes_count || 0})</h3>
+            <div class="attr-grid mb-4">
+              <div class="k">Rationale</div><div class="v">${escapeHtml(p.rationale || 'N/A')}</div>
+            </div>
+            ${changeItems.length > 0 ? renderChangeItems(changeItems, p.original_table || null) : (summary ? '<pre style="margin:4px 0;white-space:pre-wrap;font-size:13px;">' + escapeHtml(summary) + '</pre>' : '<div class="text-slate-500">No structured changes available.</div>')}
+          </div>
+
+          <div class="card mt-2">
+            <details>
+              <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;">Raw Change Set JSON</summary>
+              <div class="change-preview" style="margin-top:12px;">${escapeHtml(typeof changePreview === 'string' ? changePreview : JSON.stringify(changePreview, null, 2))}</div>
+            </details>
+          </div>
+
+          ${bottom}
+        `;
+    }
+}
+
+async function submitDecision(id, decision) {
+    const comment = document.getElementById('review-comment')?.value?.trim() || '';
+    const submittedBy = document.getElementById('reviewer-name')?.value?.trim() || 'SME Reviewer';
+    const statusEl = document.getElementById('status-msg');
+
+    const buttons = document.querySelectorAll('.actions button');
+    buttons.forEach(b => b.disabled = true);
+    if (statusEl) { statusEl.textContent = 'Sending decision to Data Engine...'; statusEl.className = 'status-msg'; }
+
+    try {
+        const res = await fetch(`/api/hitl/queue/${id}/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ decision, comment, submittedBy }),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+            if (statusEl) { statusEl.textContent = 'Error: ' + (json.error || 'Failed'); statusEl.className = 'status-msg err'; }
+            buttons.forEach(b => b.disabled = false);
+            return;
+        }
+        if (statusEl) { statusEl.textContent = 'Decision sent. Pipeline resumed.'; statusEl.className = 'status-msg ok'; }
+        await loadQueue();
+    } catch (err) {
+        if (statusEl) { statusEl.textContent = 'Network error: ' + err.message; statusEl.className = 'status-msg err'; }
+        buttons.forEach(b => b.disabled = false);
+    }
+}
+
+async function submitSmeInput(id) {
+    const smeComment = document.getElementById('sme-comment-input')?.value?.trim() || '';
+    const submittedBy = document.getElementById('sme-submitted-by')?.value?.trim() || '';
+    const submittedDate = document.getElementById('sme-submitted-date')?.value?.trim() || '';
+    const priority = document.getElementById('sme-priority')?.value || 'medium';
+    const reviewerName = document.getElementById('sme-reviewer-name')?.value?.trim() || 'SME Reviewer';
+    const statusEl = document.getElementById('status-msg');
+
+    if (!smeComment) { if (statusEl) { statusEl.textContent = 'SME comment is required.'; statusEl.className = 'status-msg err'; } return; }
+    if (!submittedBy) { if (statusEl) { statusEl.textContent = 'Submitted by is required.'; statusEl.className = 'status-msg err'; } return; }
+    if (!submittedDate) { if (statusEl) { statusEl.textContent = 'Submitted date is required.'; statusEl.className = 'status-msg err'; } return; }
+
+    const buttons = document.querySelectorAll('.actions button');
+    buttons.forEach(b => b.disabled = true);
+    if (statusEl) { statusEl.textContent = 'Submitting SME comment...'; statusEl.className = 'status-msg'; }
+
+    try {
+        const res = await fetch(`/api/hitl/queue/${id}/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                feedback: {
+                    sme_comment: smeComment,
+                    submitted_by: submittedBy,
+                    submitted_date: submittedDate,
+                    priority: priority,
+                },
+                submittedBy: reviewerName,
+            }),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+            if (statusEl) { statusEl.textContent = 'Error: ' + (json.error || 'Failed'); statusEl.className = 'status-msg err'; }
+            buttons.forEach(b => b.disabled = false);
+            return;
+        }
+        if (statusEl) { statusEl.textContent = 'SME comment submitted. Pipeline will continue.'; statusEl.className = 'status-msg ok'; }
+        await loadQueue();
+    } catch (err) {
+        if (statusEl) { statusEl.textContent = 'Network error: ' + err.message; statusEl.className = 'status-msg err'; }
+        buttons.forEach(b => b.disabled = false);
+    }
+}
+
+async function removeItem(id) {
+    if (!confirm('Remove this item from the local queue?')) return;
+    try {
+        await fetch(`/api/hitl/queue/${id}`, { method: 'DELETE' });
+        if (selectedId === id) { selectedId = null; lastRenderedStatus = null; }
+        await loadQueue();
+        renderDetail(selectedId);
+    } catch (err) { alert('Error: ' + err.message); }
+}
+
+function escapeHtml(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function renderChangeItems(items, originalTable) {
+    let html = '';
+
+    for (const item of items) {
+        const target = item.target || {};
+        const targetName = typeof target === 'string' ? target : (target.name || 'Unknown');
+        const baseVersion = target.base_version || '';
+        const ops = item.ops || [];
+        const proposed = item.proposed || null;
+        const notes = item.notes || '';
+
+        // Header for this change item
+        html += `<div class="mb-6">`;
+        html += `<div class="flex items-center gap-2 mb-3">
+            <span class="text-base font-bold text-slate-800">${escapeHtml(targetName)}</span>
+            ${baseVersion ? '<code class="small">v' + escapeHtml(baseVersion) + '</code>' : ''}
+        </div>`;
+
+        // Agent notes
+        if (notes) {
+            html += `<div class="bg-blue-50 border border-blue-200 text-blue-900 rounded-lg px-4 py-3 text-sm mb-4 leading-relaxed">${escapeHtml(notes)}</div>`;
+        }
+
+        // Operations summary chips
+        if (ops.length > 0) {
+            html += `<div class="flex flex-wrap gap-2 mb-4">`;
+            for (const op of ops) {
+                const opName = op.op || 'unknown';
+                const color = getOpColor(opName);
+                html += `<span class="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full border" style="color:${color};border-color:${color}20;background:${color}10;">${escapeHtml(opName.replace(/_/g, ' '))}</span>`;
+            }
+            html += `</div>`;
+        }
+
+        // Decision table comparison
+        if (proposed && proposed.rules) {
+            html += renderDecisionTableComparison(originalTable, proposed, ops);
+        }
+
+        // Test changes
+        const testOps = ops.filter(o => o.op && o.op.includes('test'));
+        if (testOps.length > 0) {
+            html += renderTestChanges(testOps);
+        }
+
+        html += `</div>`;
+    }
+
+    return html;
+}
+
+function getOpColor(op) {
+    const colors = {
+        modify_rule: '#d97706', add_rule: '#15803d', remove_rule: '#dc2626',
+        move_rule: '#7c3aed', edit_test: '#2563eb', add_test: '#15803d', remove_test: '#dc2626',
+        add_input_column: '#15803d', remove_input_column: '#dc2626',
+        modify_input_column: '#d97706', replace_definition: '#dc2626',
+    };
+    return colors[op] || '#64748b';
+}
+
+function renderDecisionTableComparison(originalTable, proposed, ops) {
+    const inputs = proposed.inputs || [];
+    const outputs = proposed.outputs || [];
+    const rules = proposed.rules || [];
+    const hitPolicy = proposed.hit_policy || 'UNIQUE';
+
+    // Try to get original rules for comparison
+    let origInputs = [], origOutputs = [], origRules = [];
+    if (originalTable && originalTable.inputs) {
+        origInputs = originalTable.inputs || [];
+        origOutputs = originalTable.outputs || [];
+        origRules = originalTable.rules || [];
+    }
+
+    const hasOriginal = origRules.length > 0;
+
+    // Tab switcher
+    let html = `<div class="border border-slate-200 rounded-lg overflow-hidden mb-4">`;
+
+    // Tab bar
+    html += `<div class="flex border-b border-slate-200 bg-slate-50">`;
+    if (hasOriginal) {
+        html += `<button onclick="switchTab(this, 'comparison')" class="tab-btn active px-4 py-2.5 text-xs font-semibold uppercase tracking-wide border-b-2 border-blue-600 text-blue-700 bg-white">Side-by-Side</button>`;
+        html += `<button onclick="switchTab(this, 'proposed')" class="tab-btn px-4 py-2.5 text-xs font-semibold uppercase tracking-wide border-b-2 border-transparent text-slate-500 hover:text-slate-700">Proposed Table</button>`;
+        html += `<button onclick="switchTab(this, 'original')" class="tab-btn px-4 py-2.5 text-xs font-semibold uppercase tracking-wide border-b-2 border-transparent text-slate-500 hover:text-slate-700">Current Table</button>`;
+    } else {
+        html += `<button class="tab-btn active px-4 py-2.5 text-xs font-semibold uppercase tracking-wide border-b-2 border-blue-600 text-blue-700 bg-white">Proposed Table</button>`;
+    }
+    html += `</div>`;
+
+    // Tab content
+    if (hasOriginal) {
+        html += `<div class="tab-content active" data-tab="comparison">${renderSideBySide(origInputs, origOutputs, origRules, inputs, outputs, rules, hitPolicy)}</div>`;
+        html += `<div class="tab-content" data-tab="proposed" style="display:none;">${renderDmnTable(inputs, outputs, rules, hitPolicy, 'proposed')}</div>`;
+        html += `<div class="tab-content" data-tab="original" style="display:none;">${renderDmnTable(origInputs, origOutputs, origRules, originalTable?.hit_policy || hitPolicy, 'original')}</div>`;
+    } else {
+        html += `<div class="tab-content active" data-tab="proposed">${renderDmnTable(inputs, outputs, rules, hitPolicy, 'proposed')}</div>`;
+    }
+
+    html += `</div>`;
+    return html;
+}
+
+function renderSideBySide(origInputs, origOutputs, origRules, newInputs, newOutputs, newRules, hitPolicy) {
+    let html = `<div class="grid grid-cols-2 divide-x divide-slate-200">`;
+
+    // Left: Current
+    html += `<div>
+        <div class="px-3 py-2 bg-red-50 border-b border-slate-200 text-xs font-semibold text-red-700 uppercase tracking-wide">Current (Before)</div>
+        ${renderDmnTable(origInputs, origOutputs, origRules, hitPolicy, 'original')}
+    </div>`;
+
+    // Right: Proposed
+    html += `<div>
+        <div class="px-3 py-2 bg-emerald-50 border-b border-slate-200 text-xs font-semibold text-emerald-700 uppercase tracking-wide">Proposed (After)</div>
+        ${renderDmnTable(newInputs, newOutputs, newRules, hitPolicy, 'proposed')}
+    </div>`;
+
+    html += `</div>`;
+    return html;
+}
+
+function renderDmnTable(inputs, outputs, rules, hitPolicy, mode) {
+    if (!rules || rules.length === 0) return '<div class="p-4 text-sm text-slate-500">No rules available.</div>';
+
+    let html = `<div class="overflow-x-auto">`;
+    html += `<table class="w-full text-xs border-collapse font-mono">`;
+
+    // Header row 1: Hit policy + Input/Output labels
+    html += `<thead>`;
+    html += `<tr class="border-b border-slate-200">`;
+    html += `<th class="px-2 py-2 text-center bg-slate-100 border-r border-slate-200 w-10 text-[10px] text-slate-500 font-bold">${escapeHtml(hitPolicy.charAt(0))}</th>`;
+    for (const inp of inputs) {
+        html += `<th class="px-2 py-1.5 text-center bg-blue-50 border-r border-slate-200 text-blue-800 font-semibold text-[10px] uppercase tracking-wide" title="${escapeHtml(inp.expression || inp.name || '')}">${escapeHtml(truncateCol(inp.expression || inp.name || ''))}</th>`;
+    }
+    for (const out of outputs) {
+        html += `<th class="px-2 py-1.5 text-center bg-emerald-50 border-r border-slate-200 text-emerald-800 font-semibold text-[10px] uppercase tracking-wide" title="${escapeHtml(out.name || out.expression || '')}">${escapeHtml(truncateCol(out.name || out.expression || ''))}</th>`;
+    }
+    html += `</tr>`;
+    html += `</thead>`;
+
+    // Rule rows
+    html += `<tbody>`;
+    rules.forEach((rule, idx) => {
+        const ruleInputs = rule.inputs || [];
+        const ruleOutputs = rule.outputs || [];
+        const rowBg = idx % 2 === 0 ? '' : 'bg-slate-50/50';
+
+        html += `<tr class="${rowBg} border-b border-slate-100 hover:bg-blue-50/30">`;
+        html += `<td class="px-2 py-1.5 text-center border-r border-slate-200 text-slate-400 font-medium">${idx + 1}</td>`;
+
+        for (const val of ruleInputs) {
+            const display = formatCellValue(val);
+            const cellClass = (val === '-' || val === '') ? 'text-slate-300' : 'text-slate-700';
+            html += `<td class="px-2 py-1.5 border-r border-slate-200 ${cellClass} text-center whitespace-nowrap">${escapeHtml(display)}</td>`;
+        }
+        for (const val of ruleOutputs) {
+            const display = formatCellValue(val);
+            html += `<td class="px-2 py-1.5 border-r border-slate-200 text-slate-800 font-medium text-center whitespace-nowrap">${escapeHtml(display)}</td>`;
+        }
+        html += `</tr>`;
+    });
+    html += `</tbody></table></div>`;
+
+    return html;
+}
+
+function renderTestChanges(testOps) {
+    let html = `<div class="mt-4 border border-slate-200 rounded-lg overflow-hidden">`;
+    html += `<div class="px-4 py-2.5 bg-indigo-50 border-b border-slate-200 text-xs font-semibold text-indigo-700 uppercase tracking-wide">Test Case Changes</div>`;
+    html += `<div class="p-4 space-y-3">`;
+
+    for (const op of testOps) {
+        const opName = op.op;
+        const color = getOpColor(opName);
+        const test = op.test || {};
+        const testName = test.name || op.name || 'Unnamed test';
+
+        html += `<div class="border border-slate-200 rounded-lg p-3 border-l-[3px]" style="border-left-color:${color};">`;
+        html += `<div class="flex items-center gap-2 mb-2">
+            <span class="text-[11px] font-bold uppercase" style="color:${color};">${escapeHtml(opName.replace(/_/g, ' '))}</span>
+            <span class="text-sm font-medium text-slate-700">${escapeHtml(testName)}</span>
+        </div>`;
+
+        if (test.input) {
+            html += `<div class="mb-2"><span class="text-[11px] font-semibold text-slate-500 uppercase">Input:</span>`;
+            html += `<div class="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">`;
+            for (const [k, v] of Object.entries(test.input)) {
+                html += `<div class="text-slate-500">${escapeHtml(k)}</div><div class="font-medium text-slate-800">${escapeHtml(String(v))}</div>`;
+            }
+            html += `</div></div>`;
+        }
+
+        if (test.expected) {
+            html += `<div><span class="text-[11px] font-semibold text-emerald-600 uppercase">Expected Output:</span>`;
+            html += `<div class="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">`;
+            for (const [k, v] of Object.entries(test.expected)) {
+                html += `<div class="text-slate-500">${escapeHtml(k)}</div><div class="font-semibold text-emerald-700">${escapeHtml(String(v))}</div>`;
+            }
+            html += `</div></div>`;
+        }
+
+        if (op.to && opName === 'edit_test') {
+            html += `<div class="mt-2 bg-amber-50 border border-amber-200 rounded px-3 py-2 text-xs">
+                <span class="font-semibold text-amber-700">Updated to:</span>
+                <pre class="mt-1 text-[11px] text-amber-900 whitespace-pre-wrap">${escapeHtml(JSON.stringify(op.to, null, 2))}</pre>
+            </div>`;
+        }
+
+        html += `</div>`;
+    }
+
+    html += `</div></div>`;
+    return html;
+}
+
+function formatCellValue(val) {
+    if (val === '-' || val === '' || val == null) return '-';
+    let s = String(val);
+    // Remove outer quotes for display
+    if (s.startsWith('"') && s.endsWith('"')) s = s.slice(1, -1);
+    // Unescape inner quotes
+    s = s.replace(/\\"/g, '"');
+    return s;
+}
+
+function truncateCol(name) {
+    if (name.length <= 18) return name;
+    // camelCase to abbreviated
+    return name.length > 18 ? name.substring(0, 16) + '..' : name;
+}
+
+function switchTab(btn, tabName) {
+    const container = btn.closest('.border');
+    container.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.remove('active', 'border-blue-600', 'text-blue-700', 'bg-white');
+        b.classList.add('border-transparent', 'text-slate-500');
+    });
+    btn.classList.add('active', 'border-blue-600', 'text-blue-700', 'bg-white');
+    btn.classList.remove('border-transparent', 'text-slate-500');
+    container.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+    container.querySelector(`[data-tab="${tabName}"]`).style.display = '';
+}
+
+// --- Settings ---
+function openSettings() {
+    fetch('/api/settings').then(r => r.json()).then(cfg => {
+        document.getElementById('settings-hitl-url').textContent = cfg.hitlWebhookUrl || '';
+        document.getElementById('s-data-engine-url').value = cfg.dataEngineBaseUrl || '';
+        document.getElementById('s-workflow-url').value = cfg.workflowEngineBaseUrl || '';
+        document.getElementById('s-bearer-token').value = '';
+        document.getElementById('s-bearer-hint').textContent = cfg.hitlBearerTokenConfigured
+            ? 'Token is set. Leave blank to keep it, or paste a new one.'
+            : 'No token set. Paste a Keycloak/API Bearer token for HITL resume auth.';
+        document.getElementById('s-status').textContent = '';
+        document.getElementById('settings-overlay').style.display = 'flex';
+    });
+}
+function closeSettings() { document.getElementById('settings-overlay').style.display = 'none'; }
+
+async function saveSettings() {
+    const workflowEngineBaseUrl = document.getElementById('s-workflow-url').value.trim();
+    const dataEngineBaseUrl = document.getElementById('s-data-engine-url').value.trim();
+    const hitlBearerToken = document.getElementById('s-bearer-token').value.trim();
+    const statusEl = document.getElementById('s-status');
+
+    if (!workflowEngineBaseUrl) { statusEl.textContent = 'Workflow URL required.'; statusEl.className = 'status-msg err'; return; }
+
+    try {
+        const res = await fetch('/api/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workflowEngineBaseUrl, dataEngineBaseUrl, hitlBearerToken }),
+        });
+        const json = await res.json();
+        if (!res.ok) { statusEl.textContent = 'Error: ' + (json.error || 'Failed'); statusEl.className = 'status-msg err'; return; }
+        statusEl.textContent = 'Saved.'; statusEl.className = 'status-msg ok';
+        setTimeout(closeSettings, 600);
+    } catch (err) {
+        statusEl.textContent = 'Network error: ' + err.message; statusEl.className = 'status-msg err';
+    }
+}
+
+// --- Trigger dFlow ---
+function openTriggerModal() {
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '/');
+    document.getElementById('t-submitted-date').value = today;
+    document.getElementById('t-status').textContent = '';
+    document.getElementById('trigger-overlay').style.display = 'flex';
+}
+function closeTriggerModal() { document.getElementById('trigger-overlay').style.display = 'none'; }
+
+async function triggerDflow() {
+    const ticketId = document.getElementById('t-ticket-id').value.trim();
+    const ticketType = document.getElementById('t-ticket-type').value.trim();
+    const targetDecision = document.getElementById('t-target-decision').value.trim();
+    const smeComment = document.getElementById('t-sme-comment').value.trim();
+    const submittedBy = document.getElementById('t-submitted-by').value.trim();
+    const submittedDate = document.getElementById('t-submitted-date').value.trim();
+    const priority = document.getElementById('t-priority').value;
+    const statusEl = document.getElementById('t-status');
+    const submitBtn = document.getElementById('t-submit-btn');
+
+    if (!ticketId || !ticketType || !targetDecision || !smeComment || !submittedBy) {
+        statusEl.textContent = 'Please fill in all required fields.';
+        statusEl.className = 'status-msg err';
+        return;
+    }
+
+    submitBtn.disabled = true;
+    statusEl.textContent = 'Triggering dFlow...';
+    statusEl.className = 'status-msg';
+
+    try {
+        const res = await fetch('/api/trigger-dflow', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ticket_id: ticketId,
+                ticket_type: ticketType,
+                target_decision: targetDecision,
+                sme_comment: smeComment,
+                submitted_by: submittedBy,
+                submitted_date: submittedDate || new Date().toISOString().slice(0, 10).replace(/-/g, '/'),
+                priority: priority,
+            }),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+            statusEl.textContent = 'Error: ' + (json.error || 'Failed to trigger dFlow');
+            statusEl.className = 'status-msg err';
+            submitBtn.disabled = false;
+            return;
+        }
+        statusEl.textContent = 'dFlow triggered successfully! Job ID: ' + (json.job_id || 'N/A');
+        statusEl.className = 'status-msg ok';
+        setTimeout(() => { closeTriggerModal(); }, 2000);
+    } catch (err) {
+        statusEl.textContent = 'Network error: ' + err.message;
+        statusEl.className = 'status-msg err';
+    }
+    submitBtn.disabled = false;
+}
+
+loadQueue();
+setInterval(loadQueue, 4000);
+</script>
+</body>
+</html>

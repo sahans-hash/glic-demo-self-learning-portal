@@ -1,0 +1,645 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Health Claims SME Feedback Console</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --border: #e2e5ea;
+    --text: #1f2430;
+    --muted: #6b7280;
+    --accent: #2f5eff;
+    --accent-dark: #1f3fbf;
+    --warn: #b45309;
+    --warn-bg: #fef3c7;
+    --ok: #15803d;
+    --ok-bg: #dcfce7;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .layout {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    height: calc(100vh - 65px);
+  }
+  .queue-pane {
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    background: var(--panel);
+  }
+  .queue-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    background: var(--panel);
+  }
+  .queue-header h2 { font-size: 14px; margin: 0; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); }
+  .badge {
+    background: var(--accent);
+    color: white;
+    border-radius: 999px;
+    padding: 2px 9px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .queue-item {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    position: relative;
+  }
+  .queue-item:hover { background: #f8f9fb; }
+  .queue-item.active { background: #eef2ff; border-left: 3px solid var(--accent); }
+  .queue-item .claim-id { font-weight: 600; font-size: 14px; padding-right: 22px; }
+  .queue-item .reason { color: var(--muted); font-size: 12.5px; margin-top: 4px; line-height: 1.4; }
+  .queue-item .time { color: var(--muted); font-size: 11px; margin-top: 6px; }
+  .queue-item-remove {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .queue-item-remove:hover { background: #fee2e2; color: #b91c1c; }
+  button.danger {
+    background: var(--panel);
+    border: 1px solid #fecaca;
+    color: #b91c1c;
+    border-radius: var(--radius);
+    padding: 10px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.danger:hover { background: #fef2f2; }
+  .pill {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 8px;
+    border-radius: 999px;
+    margin-top: 6px;
+  }
+  .pill.pending { background: var(--warn-bg); color: var(--warn); }
+  .pill.resolved { background: var(--ok-bg); color: var(--ok); }
+  .empty-state {
+    padding: 60px 24px;
+    text-align: center;
+    color: var(--muted);
+  }
+  .detail-pane {
+    overflow-y: auto;
+    padding: 28px 36px;
+  }
+  .detail-placeholder {
+    color: var(--muted);
+    text-align: center;
+    margin-top: 120px;
+    font-size: 14px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin-bottom: 18px;
+  }
+  .card h3 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    color: var(--muted);
+    margin: 0 0 12px 0;
+  }
+  .attr-grid {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    row-gap: 10px;
+    column-gap: 12px;
+    font-size: 14px;
+  }
+  .attr-grid .k { color: var(--muted); }
+  .attr-grid .v { font-weight: 500; word-break: break-word; }
+  .reason-box {
+    background: var(--warn-bg);
+    border: 1px solid #fde68a;
+    color: #78350f;
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    font-size: 14px;
+    line-height: 1.5;
+    margin-bottom: 18px;
+  }
+  .detail-title { font-size: 20px; font-weight: 700; margin-bottom: 2px; }
+  .detail-sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  textarea {
+    width: 100%;
+    min-height: 120px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+  }
+  textarea:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
+  input[type=text] {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  label.field-label {
+    font-size: 13px;
+    font-weight: 600;
+    display: block;
+    margin-bottom: 6px;
+  }
+  .actions { display: flex; gap: 10px; margin-top: 16px; align-items: center; }
+  button.primary {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: var(--radius);
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.primary:hover { background: var(--accent-dark); }
+  button.primary:disabled { background: #b7c2e6; cursor: not-allowed; }
+  .status-msg { font-size: 13px; margin-top: 4px; }
+  .status-msg.err { color: #b91c1c; }
+  .status-msg.ok { color: var(--ok); }
+  .resolved-box {
+    background: var(--ok-bg);
+    border: 1px solid #bbf7d0;
+    color: #14532d;
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .banner {
+    background: #fff7ed;
+    border-bottom: 1px solid #fed7aa;
+    color: #9a3412;
+    font-size: 13px;
+    padding: 8px 24px;
+  }
+  code.small { font-size: 12px; background: #f1f3f7; padding: 2px 6px; border-radius: 4px; }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .icon-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--muted);
+  }
+  .icon-btn:hover { background: #f1f3f7; color: var(--text); }
+
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 18, 25, 0.45);
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-box {
+    background: var(--panel);
+    border-radius: 14px;
+    width: 460px;
+    max-width: 92vw;
+    padding: 24px 26px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.2);
+  }
+  .modal-box h2 {
+    font-size: 17px;
+    margin: 0 0 4px 0;
+  }
+  .modal-sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .modal-field { margin-bottom: 16px; }
+  .modal-field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .modal-field .hint {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 5px;
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 22px;
+  }
+  button.secondary {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius);
+    padding: 10px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.secondary:hover { background: #f8f9fb; }
+  .webhook-hint {
+    background: #f1f3f7;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 18px;
+    word-break: break-all;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Claims SME Feedback Console</h1>
+      <div class="sub">External feedback system for the Kaya Health Insurance Claims Adjudication agent (self-learning demo)</div>
+    </div>
+    <div class="header-right">
+      <a href="/hitl.html" style="color:var(--accent);text-decoration:none;font-size:13px;font-weight:500;">HITL Approvals</a>
+      <div id="config-info" class="sub" style="text-align:right"></div>
+      <button class="icon-btn" id="open-settings-btn" title="Settings" onclick="openSettings()">⚙</button>
+    </div>
+  </header>
+  <div id="config-banner"></div>
+
+  <div class="modal-overlay" id="settings-overlay">
+    <div class="modal-box">
+      <h2>Platform connection settings</h2>
+      <div class="modal-sub">Where SME responses get sent to resume a paused workflow.</div>
+
+      <div class="webhook-hint">
+        <strong>Webhook URL for the platform's API tool:</strong><br/>
+        <span id="settings-webhook-url"></span>
+      </div>
+
+      <div class="modal-field">
+        <label for="settings-base-url">Workflow engine base URL</label>
+        <input type="text" id="settings-base-url" placeholder="http://localhost:8000/api/v1" />
+        <div class="hint">Everything before <code class="small">/feedback/&#123;workflow_id&#125;</code>.</div>
+      </div>
+
+      <div class="modal-field">
+        <label for="settings-api-key">Workflow API key</label>
+        <input type="text" id="settings-api-key" placeholder="Leave blank to keep the current key" />
+        <div class="hint" id="settings-api-key-hint"></div>
+      </div>
+
+      <div class="status-msg" id="settings-status"></div>
+
+      <div class="modal-actions">
+        <button class="secondary" onclick="closeSettings()">Cancel</button>
+        <button class="primary" id="settings-save-btn" onclick="saveSettings()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="queue-pane">
+      <div class="queue-header">
+        <h2>Pending review</h2>
+        <span class="badge" id="pending-count">0</span>
+      </div>
+      <div id="queue-list"></div>
+    </div>
+    <div class="detail-pane" id="detail-pane">
+      <div class="detail-placeholder">Select a claim from the queue to review the agent's question and respond.</div>
+    </div>
+  </div>
+
+<script>
+let queue = [];
+let selectedId = null;
+// Tracks the status last rendered into the detail pane for the selected item,
+// so the 4s poll doesn't blow away an in-progress comment by re-rendering the
+// textarea when nothing meaningful (e.g. pending -> resolved) has changed.
+let lastRenderedStatus = null;
+
+async function loadSettings() {
+    const res = await fetch('/api/settings');
+    const cfg = await res.json();
+    window.__settings = cfg;
+    document.getElementById('config-info').innerText = `Engine: ${cfg.workflowEngineBaseUrl}`;
+    if (!cfg.apiKeyConfigured) {
+        document.getElementById('config-banner').innerHTML =
+            '<div class="banner">No workflow API key configured — responses cannot be sent back to the workflow engine until you set one in <a href="#" onclick="openSettings();return false;">Settings</a>.</div>';
+    } else {
+        document.getElementById('config-banner').innerHTML = '';
+    }
+    return cfg;
+}
+
+function openSettings() {
+    const cfg = window.__settings || {};
+    document.getElementById('settings-webhook-url').textContent = cfg.webhookUrl || '';
+    document.getElementById('settings-base-url').value = cfg.workflowEngineBaseUrl || '';
+    document.getElementById('settings-api-key').value = '';
+    document.getElementById('settings-api-key-hint').textContent = cfg.apiKeyConfigured
+        ? 'A key is currently set. Leave blank to keep it, or type a new one to replace it.'
+        : 'No key set yet — paste the workflow\'s API key from admin-frontend.';
+    document.getElementById('settings-status').textContent = '';
+    document.getElementById('settings-status').className = 'status-msg';
+    document.getElementById('settings-overlay').classList.add('open');
+}
+
+function closeSettings() {
+    document.getElementById('settings-overlay').classList.remove('open');
+}
+
+async function saveSettings() {
+    const workflowEngineBaseUrl = document.getElementById('settings-base-url').value.trim();
+    const workflowApiKey = document.getElementById('settings-api-key').value.trim();
+    const statusEl = document.getElementById('settings-status');
+    const btn = document.getElementById('settings-save-btn');
+
+    if (!workflowEngineBaseUrl) {
+        statusEl.textContent = 'Base URL is required.';
+        statusEl.className = 'status-msg err';
+        return;
+    }
+
+    btn.disabled = true;
+    statusEl.textContent = 'Saving…';
+    statusEl.className = 'status-msg';
+
+    try {
+        const res = await fetch('/api/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workflowEngineBaseUrl, workflowApiKey }),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+            statusEl.textContent = 'Error: ' + (json.error || 'Failed to save settings');
+            statusEl.className = 'status-msg err';
+            btn.disabled = false;
+            return;
+        }
+        window.__settings = json;
+        statusEl.textContent = 'Saved.';
+        statusEl.className = 'status-msg ok';
+        document.getElementById('config-info').innerText = `Engine: ${json.workflowEngineBaseUrl}`;
+        document.getElementById('config-banner').innerHTML = json.apiKeyConfigured
+            ? ''
+            : '<div class="banner">No workflow API key configured — responses cannot be sent back to the workflow engine until you set one in <a href="#" onclick="openSettings();return false;">Settings</a>.</div>';
+        btn.disabled = false;
+        setTimeout(closeSettings, 700);
+    } catch (err) {
+        statusEl.textContent = 'Network error: ' + err.message;
+        statusEl.className = 'status-msg err';
+        btn.disabled = false;
+    }
+}
+
+async function loadQueue() {
+    const res = await fetch('/api/queue');
+    queue = await res.json();
+    renderQueue();
+    if (selectedId) {
+        const item = queue.find(q => q.id === selectedId);
+        // Only re-render the detail pane if the item's status actually changed
+        // (e.g. it just got resolved). Otherwise leave the DOM alone so an
+        // in-progress comment the SME is typing/pasting isn't wiped out by
+        // the periodic poll rebuilding the textarea from scratch.
+        if (!item || item.status !== lastRenderedStatus) {
+            renderDetail(selectedId);
+        }
+    }
+}
+
+function renderQueue() {
+    const listEl = document.getElementById('queue-list');
+    const pending = queue.filter(q => q.status === 'pending');
+    document.getElementById('pending-count').innerText = pending.length;
+
+    if (queue.length === 0) {
+        listEl.innerHTML = '<div class="empty-state">No feedback requests yet.<br/>Run a claim through the workflow that needs review.</div>';
+        return;
+    }
+
+    listEl.innerHTML = queue.map(item => {
+        const claimId = item.attributes?.claim_id || '(unknown claim)';
+        const active = item.id === selectedId ? 'active' : '';
+        const time = new Date(item.receivedAt).toLocaleString();
+        const reason = (item.reason || '').slice(0, 110);
+        return `
+          <div class="queue-item ${active}" onclick="selectItem('${item.id}')">
+            <button class="queue-item-remove" title="Remove from queue" onclick="event.stopPropagation(); removeItem('${item.id}')">&times;</button>
+            <div class="claim-id">Claim ${escapeHtml(claimId)}</div>
+            <div class="reason">${escapeHtml(reason)}${(item.reason||'').length > 110 ? '…' : ''}</div>
+            <div class="time">${time}</div>
+            <span class="pill ${item.status}">${item.status === 'pending' ? 'Needs review' : 'Resolved'}</span>
+          </div>
+        `;
+    }).join('');
+}
+
+async function removeItem(id) {
+    const item = queue.find(q => q.id === id);
+    if (!item) return;
+
+    const claimId = item.attributes?.claim_id || '(unknown claim)';
+    const warning = item.status === 'pending'
+        ? `This claim (${claimId}) is still pending. Removing it only clears it from this console — the workflow stays paused on the platform until feedback is submitted for it elsewhere. Continue?`
+        : `Remove claim ${claimId} from this console's queue? This does not affect anything already sent to the platform.`;
+
+    if (!confirm(warning)) return;
+
+    try {
+        const res = await fetch(`/api/queue/${id}`, { method: 'DELETE' });
+        if (!res.ok) {
+            const json = await res.json().catch(() => ({}));
+            alert('Failed to remove: ' + (json.error || res.status));
+            return;
+        }
+        if (selectedId === id) {
+            selectedId = null;
+            lastRenderedStatus = null;
+        }
+        await loadQueue();
+        renderDetail(selectedId);
+    } catch (err) {
+        alert('Network error: ' + err.message);
+    }
+}
+
+function selectItem(id) {
+    selectedId = id;
+    renderQueue();
+    renderDetail(id);
+}
+
+function renderDetail(id) {
+    const item = queue.find(q => q.id === id);
+    const pane = document.getElementById('detail-pane');
+    if (!item) {
+        pane.innerHTML = '<div class="detail-placeholder">Select a claim from the queue to review the agent\'s question and respond.</div>';
+        lastRenderedStatus = null;
+        return;
+    }
+    lastRenderedStatus = item.status;
+
+    const claimId = item.attributes?.claim_id || '(unknown claim)';
+    const attrRows = Object.entries(item.attributes || {})
+        .filter(([k]) => k !== 'feedback_request_reason')
+        .map(([k, v]) => `<div class="k">${escapeHtml(k)}</div><div class="v">${escapeHtml(String(v))}</div>`)
+        .join('');
+
+    let bottom;
+    if (item.status === 'resolved') {
+        bottom = `
+          <div class="card">
+            <h3>Resolution</h3>
+            <div class="resolved-box">
+              <strong>Submitted by:</strong> ${escapeHtml(item.resolution.submittedBy)}<br/>
+              <strong>Sent at:</strong> ${new Date(item.resolution.submittedAt).toLocaleString()}<br/><br/>
+              ${escapeHtml(item.resolution.comment).replace(/\n/g, '<br/>')}
+            </div>
+          </div>
+        `;
+    } else {
+        bottom = `
+          <div class="card">
+            <h3>Your response</h3>
+            <label class="field-label" for="submitted-by">Submitted by</label>
+            <input type="text" id="submitted-by" value="UR Reviewer" style="margin-bottom:14px" />
+            <label class="field-label" for="comment">Tell the agent how to handle this claim</label>
+            <textarea id="comment" placeholder="e.g. For emergency inpatient admissions where prior authorization is missing, approve for payment if the diagnosis is consistent with a genuine emergency and require retroactive authorization to be filed within 48 hours post-admission."></textarea>
+            <div class="actions">
+              <button class="primary" id="submit-btn" onclick="submitFeedback('${item.id}')">Submit &amp; resume workflow</button>
+              <span class="status-msg" id="status-msg"></span>
+            </div>
+          </div>
+        `;
+    }
+
+    pane.innerHTML = `
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px;">
+        <div>
+          <div class="detail-title">Claim ${escapeHtml(claimId)}</div>
+          <div class="detail-sub">Agent: ${escapeHtml(item.agentName)} &middot; Workflow: ${escapeHtml(item.workflowName)} &middot; Session: <code class="small">${escapeHtml(item.sessionId)}</code></div>
+        </div>
+        <button class="danger" style="flex-shrink:0" onclick="removeItem('${item.id}')">Remove from queue</button>
+      </div>
+
+      <div class="reason-box"><strong>Why the agent is asking:</strong><br/>${escapeHtml(item.reason || item.description || 'No reason provided')}</div>
+
+      <div class="card">
+        <h3>Claim attributes captured by the agent</h3>
+        <div class="attr-grid">${attrRows || '<div class="k">(none)</div>'}</div>
+      </div>
+
+      ${bottom}
+    `;
+}
+
+async function submitFeedback(id) {
+    const comment = document.getElementById('comment').value.trim();
+    const submittedBy = document.getElementById('submitted-by').value.trim() || 'SME Reviewer';
+    const statusEl = document.getElementById('status-msg');
+    const btn = document.getElementById('submit-btn');
+
+    if (!comment) {
+        statusEl.textContent = 'Please enter a comment before submitting.';
+        statusEl.className = 'status-msg err';
+        return;
+    }
+
+    btn.disabled = true;
+    statusEl.textContent = 'Sending to workflow engine…';
+    statusEl.className = 'status-msg';
+
+    try {
+        const res = await fetch(`/api/queue/${id}/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ comment, submittedBy }),
+        });
+        const json = await res.json();
+        if (!res.ok) {
+            statusEl.textContent = 'Error: ' + (json.error || 'Failed to submit feedback');
+            statusEl.className = 'status-msg err';
+            btn.disabled = false;
+            return;
+        }
+        statusEl.textContent = 'Workflow resumed successfully.';
+        statusEl.className = 'status-msg ok';
+        await loadQueue();
+    } catch (err) {
+        statusEl.textContent = 'Network error: ' + err.message;
+        statusEl.className = 'status-msg err';
+        btn.disabled = false;
+    }
+}
+
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+loadSettings();
+loadQueue();
+setInterval(loadQueue, 4000);
+</script>
+</body>
+</html>

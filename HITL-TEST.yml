@@ -1,0 +1,693 @@
+name: SME_DMN_Rule_Update_Agent
+version: "1.0.6"
+description: |
+  SME comment-driven DMN rule update pipeline using the decision design agent.
+  Dynamically loads ALL decisions from the workspace Decision Catalog via DRG,
+  passes them as targets to agent_design, and lets the AI agent determine
+  which rules to update or create based on the SME comment.
+
+runtime:
+  location: "guardian/sme-dmn-rule-update/${job_id}"
+  cleanup: ALWAYS
+
+variables:
+  ticket_id: "GFEGK-014"
+  ticket_type: "member_termination"
+  drg_name: "GFEEGK02-MT-ScenarioDRG"
+
+tasks:
+  # ── Task 0: Collect SME comment via HITL ─────────────────────────────────────────
+  - name: collect_sme_input
+    description: |
+      Request the SME comment and metadata from the review side via HITL.
+      This replaces hardcoded values — the reviewer submits the actual comment,
+      submitter info, and priority.
+    steps:
+      - name: request_sme_comment
+        type: hitl
+        config:
+          approvers:
+            - "sahan@kayaintel.com"
+          feedback_schema:
+            type: object
+            required:
+              - sme_comment
+              - submitted_by
+              - submitted_date
+              - priority
+            properties:
+              sme_comment:
+                type: string
+                description: "The SME's change request comment describing what rule changes are
+                  needed"
+              submitted_by:
+                type: string
+                description: "Name of the SME submitting the request"
+              submitted_date:
+                type: string
+                description: "Date the request was submitted (YYYY/MM/DD)"
+              priority:
+                type: string
+                enum:
+                  - low
+                  - medium
+                  - high
+                  - critical
+          timeout_seconds: 604800
+          request_payload:
+            ticket_id: ${var:ticket_id}
+            ticket_type: ${var:ticket_type}
+            drg_name: ${var:drg_name}
+            message: "Please provide the SME comment and metadata for this rule change
+              request."
+          delivery:
+            channel: webhook
+            url: "https://donnell-uncusped-nonfinancially.ngrok-free.dev/webhook/hitl-appro\
+              val"
+        output_to: sme_input
+
+      - name: extract_sme_input
+        type: code
+        config:
+          language: python
+          security_level: safe
+          code: |
+            hitl = state.get("sme_input", {})
+            if "result" in hitl and isinstance(hitl["result"], dict):
+                hitl = hitl["result"]
+            feedback = hitl.get("feedback") or {}
+
+            sme_comment = feedback.get("sme_comment") or ""
+            submitted_by = feedback.get("submitted_by") or ""
+            submitted_date = feedback.get("submitted_date") or ""
+            priority = feedback.get("priority") or "medium"
+
+            if not sme_comment.strip():
+                raise ValueError("SME comment is required but was not provided.")
+            if not submitted_by.strip():
+                raise ValueError("Submitted by is required but was not provided.")
+
+            return {
+                "sme_comment": sme_comment.strip(),
+                "submitted_by": submitted_by.strip(),
+                "submitted_date": submitted_date.strip(),
+                "priority": priority.strip(),
+            }
+        output_to: sme_data
+
+  # ── Task 1: Validate the incoming request ──────────────────────────────────────
+  - name: validate_request
+    description: Validate ticket metadata and SME comment.
+    depends_on:
+      - collect_sme_input
+    steps:
+      - name: validate_inputs
+        type: code
+        config:
+          language: python
+          security_level: safe
+          code: |
+            sme_data = state.get("sme_data", {})
+            if "result" in sme_data and isinstance(sme_data["result"], dict):
+                sme_data = sme_data["result"]
+
+            # Fallback: if extract_sme_input didn't populate sme_data,
+            # try reading directly from the HITL response
+            if not sme_data.get("sme_comment"):
+                hitl_raw = state.get("sme_input", {})
+                if "result" in hitl_raw and isinstance(hitl_raw["result"], dict):
+                    hitl_raw = hitl_raw["result"]
+                feedback = hitl_raw.get("feedback") or {}
+                if feedback.get("sme_comment"):
+                    sme_data = feedback
+
+            ticket_id = variables.get("ticket_id") or ""
+            ticket_type = variables.get("ticket_type") or ""
+            drg_name = variables.get("drg_name") or ""
+            sme_comment = sme_data.get("sme_comment") or ""
+            submitted_by = sme_data.get("submitted_by") or ""
+            submitted_date = sme_data.get("submitted_date") or ""
+            priority = sme_data.get("priority") or "medium"
+
+            required_check = {
+                "ticket_id": ticket_id,
+                "ticket_type": ticket_type,
+                "drg_name": drg_name,
+                "sme_comment": sme_comment,
+                "submitted_date": submitted_date,
+            }
+            missing = [k for k, v in required_check.items() if not str(v).strip()]
+            if missing:
+                raise ValueError("Missing required fields: " + ", ".join(missing))
+
+            return {
+                "is_valid": True,
+                "ticket_id": ticket_id.strip(),
+                "ticket_type": ticket_type.strip(),
+                "drg_name": drg_name.strip(),
+                "sme_comment": sme_comment.strip(),
+                "submitted_by": submitted_by.strip(),
+                "submitted_date": submitted_date.strip(),
+                "priority": priority.strip(),
+            }
+        output_to: request_validation
+
+  # ── Task 2: Load all decisions from the DRG ─────────────────────────────────────
+  - name: load_catalog
+    description: Load the decisions that belong to the target DRG.
+    depends_on:
+      - validate_request
+    steps:
+      - name: get_drg_decisions
+        type: rules
+        config:
+          operation: decision_catalog
+          mode: get_graph
+          graph_name: ${var:drg_name}
+          include_definitions: true
+        output_to: catalog_listing
+
+  # ── Task 3: Build targets list from DRG ────────────────────────────────────────
+  - name: build_targets
+    description: Extract decision names from the DRG node list.
+    depends_on:
+      - load_catalog
+    steps:
+      - name: extract_targets
+        type: code
+        config:
+          language: python
+          security_level: safe
+          code: |
+            raw = state.get("catalog_listing", {})
+            catalog = raw.get("result", raw)
+            drg_name = variables.get("drg_name", "")
+            default_version = catalog.get("default_version")
+
+            nodes = []
+            for v in catalog.get("versions", []):
+                if v.get("version") == default_version:
+                    defn = v.get("definition") or {}
+                    nodes = defn.get("nodes", [])
+                    break
+
+            if not nodes:
+                for v in catalog.get("versions", []):
+                    defn = v.get("definition") or {}
+                    if defn.get("nodes"):
+                        nodes = defn["nodes"]
+                        break
+
+            if not nodes:
+                raise ValueError(
+                    f"No decisions found in DRG '{drg_name}'. "
+                    f"Debug — catalog keys: {list(catalog.keys())}, "
+                    f"versions count: {len(catalog.get('versions', []))}, "
+                    f"default_version: {default_version}"
+                )
+
+            targets = []
+            for n in nodes:
+                if isinstance(n, dict) and n.get("decision"):
+                    targets.append(n["decision"])
+                elif isinstance(n, str):
+                    targets.append(n)
+
+            if not targets:
+                raise ValueError(
+                    "Could not extract decision names from the DRG node list."
+                )
+
+            return {
+                "targets": targets,
+                "decision_count": len(targets),
+                "drg_name": drg_name,
+            }
+        output_to: target_data
+
+  # ── Task 4: Agent design — propose rule changes based on SME comment ────────────
+  - name: propose_changes
+    description: |
+      Use agent_design in revise mode to propose changes to the catalog decisions
+      based on the SME comment. Produces a change set with rule AND test updates.
+    depends_on:
+      - build_targets
+    timeout: 600
+    steps:
+      - name: agent_revise
+        type: rules
+        config:
+          operation: decision_catalog
+          mode: agent_design
+          instruction: |
+            You are an insurance DMN business-rule expert reviewing a change
+            request from a subject matter expert (SME).
+
+            SME COMMENT
+            ${state:request_validation.sme_comment}
+
+            TASK
+            1. Review all decision tables provided as targets.
+            2. Identify which table(s) and rule(s) are affected by the SME comment.
+            3. Propose precise modifications — only change what the SME requested.
+            4. Do NOT invent new rules, thresholds, or fields not implied by the
+               SME comment.
+            5. Do NOT modify tables or rules unrelated to the change request.
+            6. Preserve existing rule structure, hit policies, and I/O columns
+               unless the comment explicitly requires structural changes.
+            7. If the comment requires a new decision table, create it with
+               appropriate inputs, outputs, and rules derived from the comment.
+            8. Provide clear rationale for every change made.
+            9. IMPORTANT: For every rule you modify, you MUST also update the
+               corresponding test cases so their expected outputs reflect the
+               new rule logic. The regression gate will reject changes if tests
+               still expect the old outputs.
+
+            OP FORMAT RULES (CRITICAL — follow exactly):
+            - Valid rule ops: add_rule, remove_rule, modify_rule, move_rule
+            - Valid column ops: add_input_column, remove_input_column,
+              modify_input_column, add_output_column, remove_output_column,
+              modify_output_column
+            - Valid other ops: change_hit_policy, replace_definition
+            - Valid test ops ONLY: add_test, edit_test, remove_test
+              NEVER use "modify_test" or "update_test" — they do not exist.
+            - For edit_test format:
+              {"op": "edit_test", "name": "test name", "to": {"expected": {...}}}
+              The "to" field MUST be a dict object containing the updated fields.
+              NEVER put test fields flat on the op — always nest under "to".
+            - To reference an existing rule, use "rule_id" (e.g. "rule_id": "r5").
+              The "at" field is for NUMERIC POSITION ONLY (integer like 0, 1, 2).
+              NEVER put a rule ID string like "r5" in the "at" field.
+            - For modify_rule: {"op": "modify_rule", "rule_id": "r5", "cells": {...}}
+            - For remove_rule: {"op": "remove_rule", "rule_id": "r5"}
+            - For add_rule: {"op": "add_rule", "at": 0, "cells": {...}}
+              where "at" is an integer position, or omit "at" to append.
+            - For move_rule: {"op": "move_rule", "rule_id": "r5", "to": 2}
+              where "to" is an integer position.
+          targets: ${state:target_data.targets}
+          shape: decision
+          auto_apply: false
+        output_to: agent_result
+
+  # ── Task 5: HITL Review — SME/Approver must approve before applying ──────────
+  - name: hitl_review
+    description: |
+      Pause for human review. Presents the proposed change set to an approver
+      (SME lead or rule owner) who can approve, reject, or request modifications.
+    depends_on:
+      - propose_changes
+    steps:
+      - name: prepare_review_payload
+        type: code
+        config:
+          language: python
+          security_level: full
+          code: |
+            import json
+
+            agent_result = state.get("agent_result", {})
+            if "result" in agent_result and isinstance(agent_result["result"], dict):
+                agent_result = agent_result["result"]
+            validation = state.get("request_validation", {})
+            if "result" in validation and isinstance(validation["result"], dict):
+                validation = validation["result"]
+            target_data = state.get("target_data", {})
+            if "result" in target_data and isinstance(target_data["result"], dict):
+                target_data = target_data["result"]
+
+            change_set = agent_result.get("change_set", {})
+            items = change_set.get("items", [])
+
+            summary_lines = []
+            for item in items:
+                ops = item.get("ops", [])
+                target = item.get("target", {})
+                target_name = target.get("name", "unknown") if isinstance(target, dict) else str(target)
+                for op_item in ops:
+                    op = op_item.get("op", "unknown")
+                    summary_lines.append(f"- {op} on {target_name}")
+                if not ops:
+                    summary_lines.append(f"- revision on {target_name}")
+
+            review_payload = {
+                "ticket_id": validation.get("ticket_id"),
+                "drg_name": validation.get("drg_name"),
+                "targets": target_data.get("targets", []),
+                "sme_comment": validation.get("sme_comment"),
+                "submitted_by": validation.get("submitted_by"),
+                "rationale": change_set.get("rationale", ""),
+                "changes_summary": summary_lines,
+                "changes_count": len(items),
+                "change_set_preview": json.dumps(change_set, indent=2, default=str),
+                "change_items": items,
+            }
+
+            return review_payload
+        output_to: review_payload
+
+      - name: request_approval
+        type: hitl
+        config:
+          approvers:
+            - "sahan@kayaintel.com"
+          feedback_schema:
+            type: object
+            required:
+              - decision
+            properties:
+              decision:
+                type: string
+                enum:
+                  - approved
+                  - rejected
+                  - modify
+              comment:
+                type: string
+          timeout_seconds: 604800
+          request_payload:
+            ticket_id: ${var:ticket_id}
+            drg_name: ${var:drg_name}
+            submitted_by: ${state:request_validation.submitted_by}
+            priority: ${state:request_validation.priority}
+            sme_comment: ${state:request_validation.sme_comment}
+            rationale: ${state:review_payload.rationale}
+            changes_count: ${state:review_payload.changes_count}
+            changes_summary: ${state:review_payload.changes_summary}
+            change_set_preview: ${state:review_payload.change_set_preview}
+            change_items: ${state:review_payload.change_items}
+          delivery:
+            channel: webhook
+            url: "https://donnell-uncusped-nonfinancially.ngrok-free.dev/webhook/hitl-appro\
+              val"
+        output_to: hitl_decision
+
+      - name: check_approval
+        type: code
+        config:
+          language: python
+          security_level: safe
+          code: |
+            hitl = state.get("hitl_decision", {})
+            if "result" in hitl and isinstance(hitl["result"], dict):
+                hitl = hitl["result"]
+
+            # Try multiple paths for the decision
+            feedback = hitl.get("feedback") or {}
+            meta = hitl.get("_hitl") or {}
+
+            decision = feedback.get("decision") or hitl.get("decision") or ""
+            comment = feedback.get("comment") or hitl.get("comment") or ""
+            reviewer = meta.get("responded_by_email") or hitl.get("responded_by_email") or "unknown"
+
+            approved = (decision == "approved")
+
+            return {
+                "approved": approved,
+                "reviewer": reviewer,
+                "comment": comment,
+                "decision": decision,
+            }
+        output_to: approval_result
+
+  # ── Task 6: Apply the change set to the catalog ────────────────────────────────
+  - name: apply_changes
+    description: |
+      Apply the agent's proposed change set. Runs the regression gate against
+      the updated rules + updated tests, then persists as a new minor version.
+    depends_on:
+      - hitl_review
+    steps:
+      - name: extract_change_set
+        type: code
+        config:
+          language: python
+          security_level: safe
+          code: |
+            # Read HITL decision directly from hitl_decision state
+            hitl = state.get("hitl_decision", {})
+            if "result" in hitl and isinstance(hitl["result"], dict):
+                hitl = hitl["result"]
+            feedback = hitl.get("feedback") or {}
+            decision = feedback.get("decision") or hitl.get("decision") or ""
+
+            # If not approved, skip apply by returning empty changeset
+            if decision != "approved":
+                return {
+                    "change_set": {"items": []},
+                    "skipped": True,
+                    "decision": decision,
+                    "comment": feedback.get("comment") or hitl.get("comment") or "",
+                }
+
+            # Approved — extract the real change set
+            agent_result = state.get("agent_result", {})
+            if "result" in agent_result and isinstance(agent_result["result"], dict):
+                agent_result = agent_result["result"]
+            change_set = agent_result.get("change_set")
+            if not change_set or not isinstance(change_set, dict):
+                raise ValueError("No valid change_set found in agent result.")
+            return {"change_set": change_set, "skipped": False, "decision": "approved"}
+        output_to: extracted_change
+
+      - name: apply_changeset
+        type: rules
+        config:
+          operation: decision_catalog
+          mode: agent_apply
+          change_set: ${state:extracted_change.change_set}
+        output_to: apply_result
+
+  # ── Task 7: Bump the DRG version after successful apply ────────────────────────
+  - name: bump_drg_version
+    description: Publish a new DRG version (minor bump) and promote to default.
+    depends_on:
+      - apply_changes
+    steps:
+      - name: check_applied
+        type: code
+        config:
+          language: python
+          security_level: safe
+          code: |
+            # Check if apply was skipped (rejected) or failed
+            extracted = state.get("extracted_change", {})
+            if "result" in extracted and isinstance(extracted["result"], dict):
+                extracted = extracted["result"]
+            if extracted.get("skipped", False):
+                return {"skip": True, "reason": "Changes were rejected/skipped"}
+
+            apply = state.get("apply_result", {})
+            if isinstance(apply, dict):
+                apply = apply.get("result", apply)
+            if not apply.get("applied", False):
+                return {"skip": True, "reason": "Changes were not applied"}
+            return {"skip": False}
+        output_to: version_gate
+
+      - name: extract_drg_definition
+        type: code
+        condition: "${state:version_gate.skip} == false"
+        config:
+          language: python
+          security_level: safe
+          code: |
+            raw = state.get("catalog_listing", {})
+            catalog = raw.get("result", raw)
+            default_version = catalog.get("default_version")
+
+            definition = None
+            for v in catalog.get("versions", []):
+                if v.get("version") == default_version:
+                    definition = v.get("definition")
+                    break
+
+            if not definition:
+                for v in catalog.get("versions", []):
+                    if v.get("definition"):
+                        definition = v["definition"]
+                        break
+
+            if not definition:
+                raise ValueError("Could not extract DRG definition for version bump")
+
+            return {"definition": definition}
+        output_to: drg_definition
+
+      - name: publish_new_version
+        type: rules
+        condition: "${state:version_gate.skip} == false"
+        config:
+          operation: decision_catalog
+          mode: add_graph_version
+          graph_name: ${var:drg_name}
+          definition: "${state:drg_definition.definition}"
+          bump: minor
+          make_default: true
+          changelog: "Auto-bumped after SME rule update — ticket ${var:ticket_id}"
+        output_to: drg_version_result
+
+  # ── Task 8: Produce audit report ──────────────────────────────────────────────
+  - name: produce_report
+    description: Generate a structured audit report of the changes applied.
+    depends_on:
+      - bump_drg_version
+    steps:
+      - name: build_report
+        type: code
+        config:
+          language: python
+          security_level: full
+          code: |
+            import json
+            from pathlib import Path
+
+            # Check if apply was skipped (rejected/modify)
+            extracted = state.get("extracted_change", {})
+            if "result" in extracted and isinstance(extracted["result"], dict):
+                extracted = extracted["result"]
+            was_skipped = extracted.get("skipped", False)
+            hitl_decision = extracted.get("decision", "")
+            hitl_comment = extracted.get("comment", "")
+
+            agent_result = state.get("agent_result", {})
+            if "result" in agent_result and isinstance(agent_result["result"], dict):
+                agent_result = agent_result["result"]
+            validation = state.get("request_validation", {})
+            if "result" in validation and isinstance(validation["result"], dict):
+                validation = validation["result"]
+
+            approval = state.get("approval_result", {})
+            if "result" in approval and isinstance(approval["result"], dict):
+                approval = approval["result"]
+
+            change_set = agent_result.get("change_set", {})
+            items = change_set.get("items", [])
+
+            if was_skipped:
+                applied = False
+                processing_status = "REJECTED" if hitl_decision == "rejected" else "MODIFICATIONS_REQUESTED"
+            else:
+                apply_result = state.get("apply_result", {})
+                if "result" in apply_result and isinstance(apply_result["result"], dict):
+                    apply_result = apply_result["result"]
+                applied = apply_result.get("applied", True)
+                processing_status = "APPLIED" if applied else "REVIEW_REQUIRED"
+
+            affected_tables = []
+            for item in items:
+                target = item.get("target", {})
+                if isinstance(target, dict):
+                    affected_tables.append(target.get("name", "unknown"))
+                elif isinstance(target, str):
+                    affected_tables.append(target)
+            affected_tables = list(set(affected_tables))
+
+            drg_version_raw = state.get("drg_version_result", {})
+            drg_version_data = drg_version_raw.get("result", drg_version_raw) if isinstance(drg_version_raw, dict) else {}
+
+            target_data = state.get("target_data", {})
+            if "result" in target_data and isinstance(target_data["result"], dict):
+                target_data = target_data["result"]
+
+            report = {
+                "ticket_id": validation.get("ticket_id"),
+                "ticket_type": validation.get("ticket_type"),
+                "drg_name": validation.get("drg_name"),
+                "sme_comment": validation.get("sme_comment"),
+                "submitted_by": validation.get("submitted_by"),
+                "submitted_date": validation.get("submitted_date"),
+                "priority": validation.get("priority"),
+                "catalog_decisions_reviewed": target_data.get("decision_count", 0),
+                "targets_provided": target_data.get("targets", []),
+                "rationale": change_set.get("rationale", ""),
+                "changes_proposed": len(items),
+                "affected_tables": affected_tables,
+                "applied": applied,
+                "drg_version": drg_version_data.get("version"),
+                "approved_by": approval.get("reviewer", "unknown"),
+                "approval_comment": hitl_comment or approval.get("comment", ""),
+                "decision": hitl_decision,
+                "agent_notes": agent_result.get("notes", ""),
+                "diagnostics": agent_result.get("diagnostics", []),
+                "processing_status": processing_status,
+                "requires_hitl": False,
+            }
+
+            reports_dir = Path("reports")
+            reports_dir.mkdir(parents=True, exist_ok=True)
+
+            report_path = reports_dir / "change_report.json"
+            report_path.write_text(
+                json.dumps(report, indent=2, default=str),
+                encoding="utf-8",
+            )
+
+            change_set_path = reports_dir / "change_set.json"
+            change_set_path.write_text(
+                json.dumps(change_set, indent=2, default=str),
+                encoding="utf-8",
+            )
+
+            return report
+        output_to: final_result
+
+output:
+  response:
+    on_success:
+      result: ${state:final_result}
+    on_failure:
+      ticket_id: ${var:ticket_id}
+      error_type: ${error:type}
+      error_message: ${error:message}
+      processing_status: FAILED
+      requires_hitl: true
+
+  files:
+    on_success:
+      - name: change_report.json
+        path: reports/change_report.json
+        mime: application/json
+      - name: change_set.json
+        path: reports/change_set.json
+        mime: application/json
+
+metadata:
+  example:
+    id: sme-dmn-rule-update-agent
+    title: "SME Comment-Driven DMN Rule Update (DRG + Design Agent)"
+    summary: |
+      Accepts an SME comment via HITL, dynamically loads ALL decisions from the
+      workspace Decision Catalog via DRG, uses agent_design to intelligently
+      revise only the affected rules, and bumps the DRG version after apply.
+    category: ai-automation
+    capabilities:
+      - dmn-rule-analysis
+      - decision-catalog
+      - agent-design
+      - catalog-versioning
+      - drg-versioning
+      - hitl
+      - dynamic-catalog-discovery
+    executors:
+      - code
+      - rules
+      - hitl
+    connectors: []
+    level: advanced
+    tags:
+      - guardian
+      - dmn
+      - catalog
+      - sme
+      - agent-design
+      - business-rules
+      - drg
+    requires_secrets: []
+
+tags:
+  - guardian
+  - member-termination
+  - dmn
+  - catalog
+  - sme
+  - agent-design

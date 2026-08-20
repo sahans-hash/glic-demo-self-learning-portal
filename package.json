@@ -1,0 +1,14 @@
+{
+  "name": "sme-feedback-app",
+  "version": "1.0.0",
+  "description": "Standalone SME feedback console for the Kaya self-learning demo (health insurance claims adjudication)",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --env-file-if-exists=.env --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
