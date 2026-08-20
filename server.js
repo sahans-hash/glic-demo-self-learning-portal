@@ -4,7 +4,8 @@ const path = require("path");
 const crypto = require("crypto");
 
 const PORT = process.env.PORT || 4100;
-const DATA_DIR = process.env.DATA_DIR || __dirname;
+const DATA_DIR =
+  process.env.DATA_DIR || (process.env.VERCEL ? "/tmp" : __dirname);
 const DATA_FILE = path.join(DATA_DIR, "data.json");
 const HITL_DATA_FILE = path.join(DATA_DIR, "hitl-data.json");
 const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
@@ -507,16 +508,20 @@ app.get("/api/config", (_req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`SME Review Portal running on http://localhost:${PORT}`);
-  console.log(
-    `  Self-learning webhook: http://localhost:${PORT}/webhook/feedback-request`,
-  );
-  console.log(
-    `  HITL approval webhook: http://localhost:${PORT}/webhook/hitl-approval`,
-  );
-  console.log(`  Workflow Engine: ${settings.workflowEngineBaseUrl}`);
-  console.log(`  Data Engine: ${settings.dataEngineBaseUrl}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`SME Review Portal running on http://localhost:${PORT}`);
+    console.log(
+      `  Self-learning webhook: http://localhost:${PORT}/webhook/feedback-request`,
+    );
+    console.log(
+      `  HITL approval webhook: http://localhost:${PORT}/webhook/hitl-approval`,
+    );
+    console.log(`  Workflow Engine: ${settings.workflowEngineBaseUrl}`);
+    console.log(`  Data Engine: ${settings.dataEngineBaseUrl}`);
+  });
+}
+
+module.exports = app;
 
 //C:/Users/SahanSamarasinghe/Downloads/ngrok-v3-stable-windows-amd64/ngrok.exe http 4100
